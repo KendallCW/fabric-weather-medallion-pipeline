@@ -1,0 +1,124 @@
+{
+    "name": "pl_ingest_weather_bronze",
+    "properties": {
+        "activities": [
+            {
+                "name": "foreach_location",
+                "type": "ForEach",
+                "dependsOn": [],
+                "userProperties": [],
+                "typeProperties": {
+                    "items": {
+                        "value": "@pipeline().parameters.locations",
+                        "type": "Expression"
+                    },
+                    "isSequential": true,
+                    "activities": [
+                        {
+                            "name": "cp_ingest_weather",
+                            "type": "Copy",
+                            "dependsOn": [],
+                            "policy": {
+                                "timeout": "0.12:00:00",
+                                "retry": 3,
+                                "retryIntervalInSeconds": 30,
+                                "secureOutput": false,
+                                "secureInput": false
+                            },
+                            "userProperties": [],
+                            "typeProperties": {
+                                "source": {
+                                    "type": "BinarySource",
+                                    "storeSettings": {
+                                        "type": "HttpReadSettings",
+                                        "requestMethod": "GET"
+                                    },
+                                    "formatSettings": {
+                                        "type": "BinaryReadSettings"
+                                    }
+                                },
+                                "sink": {
+                                    "type": "BinarySink",
+                                    "storeSettings": {
+                                        "type": "AzureBlobFSWriteSettings"
+                                    }
+                                },
+                                "enableStaging": false
+                            },
+                            "inputs": [
+                                {
+                                    "referenceName": "ds_openmeteo_http",
+                                    "type": "DatasetReference",
+                                    "parameters": {
+                                        "p_latitude": "@item().latitude",
+                                        "p_longitude": "@item().longitude",
+                                        "p_start_date": "@pipeline().parameters.start_date",
+                                        "p_end_date": "@pipeline().parameters.end_date"
+                                    }
+                                }
+                            ],
+                            "outputs": [
+                                {
+                                    "referenceName": "ds_adls_bronze_weather_binary",
+                                    "type": "DatasetReference",
+                                    "parameters": {
+                                        "p_location_id": "@item().location_id",
+                                        "p_year": "@formatDateTime(utcnow(),'yyyy')",
+                                        "p_month": "@formatDateTime(utcnow(),'MM')",
+                                        "p_day": "@formatDateTime(utcnow(),'dd')"
+                                    }
+                                }
+                            ]
+                        }
+                    ]
+                }
+            }
+        ],
+        "parameters": {
+            "locations": {
+                "type": "array",
+                "defaultValue": [
+                    {
+                        "location_id": "cincinnati",
+                        "city_name": "Cincinnati",
+                        "latitude": "39.1031",
+                        "longitude": "-84.5120"
+                    },
+                    {
+                        "location_id": "chicago",
+                        "city_name": "Chicago",
+                        "latitude": "41.8781",
+                        "longitude": "-87.6298"
+                    },
+                    {
+                        "location_id": "dubai",
+                        "city_name": "Dubai",
+                        "latitude": "25.2048",
+                        "longitude": "55.2708"
+                    },
+                    {
+                        "location_id": "reykjavik",
+                        "city_name": "Reykjavik",
+                        "latitude": "64.1466",
+                        "longitude": "-21.9426"
+                    },
+                    {
+                        "location_id": "singapore",
+                        "city_name": "Singapore",
+                        "latitude": "1.3521",
+                        "longitude": "103.8198"
+                    }
+                ]
+            },
+            "start_date": {
+                "type": "string",
+                "defaultValue": "2015-01-01"
+            },
+            "end_date": {
+                "type": "string",
+                "defaultValue": "2025-12-31"
+            }
+        },
+        "annotations": []
+    }
+}

@@ -1,0 +1,36 @@
+{
+    "name": "ds_adls_bronze_weather_binary",
+    "properties": {
+        "linkedServiceName": {
+            "referenceName": "ls_adlsgen2_bronze",
+            "type": "LinkedServiceReference"
+        },
+        "parameters": {
+            "p_location_id": {
+                "type": "string"
+            },
+            "p_year": {
+                "type": "string"
+            },
+            "p_month": {
+                "type": "string"
+            },
+            "p_day": {
+                "type": "string"
+            }
+        },
+        "annotations": [],
+        "type": "Binary",
+        "typeProperties": {
+            "location": {
+                "type": "AzureBlobFSLocation",
+                "fileName": "data.json",
+                "folderPath": {
+                    "value": "weather/@{dataset().p_location_id}/@{dataset().p_year}/@{dataset().p_month}/@{dataset().p_day}",
+                    "type": "Expression"
+                },
+                "fileSystem": "bronze"
+            }
+        }
+    }
+}
