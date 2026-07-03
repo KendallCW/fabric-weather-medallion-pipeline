@@ -1,3 +1,7 @@
+# Design Decisions
+
+This document records the *why* behind architectural choices — not just what was built, but what was considered and rejected.
+
 ## Data source: Open-Meteo
 
 **Considered:** weather (Open-Meteo), public transit (GTFS), crypto/stock prices.
@@ -25,6 +29,55 @@
 **Revisited:** once the connector switched from REST to HTTP+Binary (see above), the size concern no longer applied — Binary format copies raw bytes without ADF attempting to parse/decode the response, removing the failure mode chunking was meant to avoid.
 
 **Outcome:** the full 2015-2025 range succeeded in a single call per city with the HTTP+Binary approach — no chunking needed. Confirms that the earlier size concern was specific to the REST connector's decoding step, not an inherent limit on response size for this API/date range combination.
+
+## Local PySpark on Windows: environment issues resolved
+
+Getting PySpark + Delta Lake running locally on Windows (see "Execution environment" decision above) surfaced four distinct, non-obvious issues, each worth recording since they're easy to misdiagnose as code bugs:
+
+1. **Missing `winutils.exe`/`hadoop.dll` on PATH** — Spark's Hadoop dependency needs Windows-native binaries that Windows doesn't ship. Downloading them wasn't enough; `C:\hadoop\bin` also had to be explicitly added to PATH so the JVM could load `hadoop.dll` via `System.loadLibrary`.
+2. **Corrupted local warehouse from failed prior runs** — the local run uses Spark's in-memory catalog (not persisted), so leftover Delta table directories from earlier failed attempts conflicted with fresh runs. Fix: delete the local `warehouse/` directory before re-running after a failure.
+3. **PySpark 4.1.1 crashes on Windows with Python 3.12+** (a known PySpark/Windows compatibility issue, tracked as SPARK-53759) — the fix was installing Python 3.11 specifically and creating a dedicated virtual environment for this project rather than using the system-wide Python 3.14.
+4. **`PYSPARK_PYTHON` not automatically inferred** — even with the 3.11 venv active, Spark's worker processes kept resolving `python` from the global PATH (3.14) unless `PYSPARK_PYTHON`/`PYSPARK_DRIVER_PYTHON` were explicitly set to the venv's interpreter.
+
+**Decision:** rather than persisting `PYSPARK_PYTHON` as a global Windows user environment variable, use a project-scoped activation script (`run_local_notebook.ps1`) that sets these variables only for the current PowerShell session. A global pin would risk silently breaking Project 2 of the portfolio roadmap (Databricks/PySpark), which will likely need a different Python/PySpark version.
+
+## Execution environment: local PySpark instead of Fabric Lakehouse (for now)
+
+**Context:** the silver-layer notebook (`01_bronze_to_silver.py`) was designed and implemented for Microsoft Fabric Lakehouse. Getting it running in an actual Fabric environment turned into a multi-hour licensing/access obstacle course, unrelated to the code or the architecture itself:
+
+- The university's shared Fabric Trial capacity hit persistent `TooManyRequestsForCapacity` (HTTP 430) errors, reproducible even on a trivial job (`print("hello")`), confirming capacity-level contention shared across many students rather than anything related to this project's workload.
+- Attempts to get a dedicated, personal Fabric environment ran into a chain of Microsoft account/licensing walls: the Microsoft 365 Developer Program rejected sign-up twice (once due to an old B2B guest association with a former employer's tenant, once due to a phone number already tied to another developer account); creating a personal Azure subscription led to a "Default Directory" conflict with that same legacy tenant; and creating a paid Fabric (F2) capacity was blocked with "Unsupported account — you cannot create a Microsoft capacity using a personal account," even from a freshly created tenant.
+
+**Decision:** run the bronze→silver (and later silver→gold) transformation logic locally with PySpark + Delta Lake, against files downloaded from the real ADLS Gen2 bronze container, rather than continuing to spend portfolio-building time on Microsoft account/licensing troubleshooting unrelated to data engineering skill.
+
+**Why this is still valid portfolio evidence:** the transformation logic, incremental watermark design, MERGE semantics, and validation rules are identical to what would run in Fabric — Delta Lake tables behave the same locally as in a Fabric Lakehouse, since Fabric's Lakehouse is itself built on Delta Lake/Spark. The only difference is the execution host (local machine vs. Fabric's managed Spark runtime), not the engineering.
+
+**Revisit when:** a properly isolated, non-contended Fabric environment becomes available (e.g., a work environment with organizational Fabric access) — at that point, the same unmodified notebook code can be moved back to a real Fabric Lakehouse with no logic changes, only re-pointing `BRONZE_GLOB` from a local path back to `Files/bronze/...`.
+
+## Silver-layer backfill: chunked by location (Fabric Free Trial capacity)
+
+**Problem:** running the bronze→silver notebook against the full backfill (11 years × 5 cities in one job) repeatedly hit `TooManyRequestsForCapacity` (HTTP 430) on the Fabric Free Trial capacity, even after clearing queued/running jobs via Monitoring hub — suggesting capacity-level throttling from cumulative usage, not just a single stuck job.
+
+**Decision:** temporarily parameterize `BRONZE_GLOB` to target one `location_id` at a time (e.g. `Files/bronze/weather/cincinnati/*/*/*/data.json`) and run the notebook once per city, with a short pause between runs. This required no logic changes — the watermark table already tracks progress per `location_id`, so partial, city-by-city backfill runs are a natural fit rather than a workaround bolted on.
+
+**Note:** this chunking is a Free Trial capacity accommodation, not a permanent pattern. Once the historical backfill is complete, `BRONZE_GLOB` reverts to the full wildcard (`*/*/*/*`) for ongoing daily incremental runs, which handle a small enough volume per run that chunking is unnecessary.
+
+## Known limitation: cross-region shortcut (not fixed, documented instead)
+
+The ADLS Gen2 storage account (`stweathermedallion`) lives in **East US** (chosen manually when creating the resource group), while the Fabric workspace/capacity is in **West US** — inherited automatically from the Free Trial's tenant-assigned capacity, which isn't a region you select manually the way you do for an Azure resource group.
+
+**Impact:** the OneLake shortcut from `Files/bronze` to the storage account works correctly (Fabric supports cross-region shortcuts), but every read crosses regions, adding latency and, outside of trial capacity, would incur cross-region data transfer costs.
+
+**Decision:** left as-is rather than recreating the storage account in West US to match, because fixing it would mean rebuilding the entire ADF pipeline (new storage account, new linked service, new shortcut) for a cost/latency issue that doesn't block functionality on a trial capacity. In a production scenario, this is exactly the kind of mismatch a data architect would flag and fix before go-live — co-locating compute and storage in the same region is a real best practice being consciously deviated from here for portfolio-timeline reasons, not overlooked.
+
+## Operational constraint: Fabric Free Trial capacity
+
+This project runs on the **Fabric Free Trial** capacity, which allows effectively one Spark job at a time — no queuing, no parallel execution. This surfaced as repeated `TooManyRequestsForCapacity` (HTTP 430) errors, usually caused by leftover sessions from a prior run or multiple browser tabs holding separate Spark sessions open simultaneously.
+
+**Practical implications for this project:**
+- Notebooks must be run one at a time, from a single browser tab, with prior sessions confirmed closed via Monitoring hub before starting a new run.
+- Pipeline scheduling design (bronze → silver → gold) must be strictly sequential, never parallel, as long as this capacity tier is in use.
+- If this becomes a recurring blocker, the fix is upgrading to a paid capacity SKU — not a code or configuration change.
 
 ## Fabric shortcut authentication: organizational account (not account key)
 
