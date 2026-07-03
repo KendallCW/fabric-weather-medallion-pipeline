@@ -1,0 +1,26 @@
+# Secrets / config
+*.env
+local.settings.json
+*.pfx
+
+# Local execution environment (see local/README.md) — machine-specific,
+# not portfolio artifacts: virtual envs, generated Delta warehouse, sample
+# bronze data downloaded for local testing.
+local/.venv*/
+local/warehouse/
+local/bronze/
+
+# Notebook checkpoints
+.ipynb_checkpoints/
+
+# Python
+__pycache__/
+*.pyc
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Power BI temp files
+*.pbix.bak
+~$*.pbix
