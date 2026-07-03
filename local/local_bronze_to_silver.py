@@ -10,12 +10,13 @@ from delta import configure_spark_with_delta_pip
 from delta.tables import DeltaTable
 import uuid
 from datetime import datetime, timezone
+from pathlib import Path
 
 # ---------------------------------------------------------------------------
 # Local Spark session setup (this block replaces Fabric's built-in `spark`)
 # ---------------------------------------------------------------------------
 
-PROJECT_ROOT = "C:/Users/kcast/Projects/fabric-local-test"
+PROJECT_ROOT = Path(__file__).resolve().parent.as_posix()
 WAREHOUSE_DIR = f"{PROJECT_ROOT}/warehouse"
 
 builder = (
