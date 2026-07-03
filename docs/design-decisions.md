@@ -26,6 +26,18 @@
 
 **Outcome:** the full 2015-2025 range succeeded in a single call per city with the HTTP+Binary approach — no chunking needed. Confirms that the earlier size concern was specific to the REST connector's decoding step, not an inherent limit on response size for this API/date range combination.
 
+## Fabric shortcut authentication: organizational account (not account key)
+
+**Considered:** account key (matching the pattern used for ADF's ADLS linked service) vs. organizational account (Entra ID delegated identity) for the OneLake shortcut connecting `Files/bronze` to the ADLS Gen2 container.
+
+**Decision:** organizational account. Reasons:
+1. No static secret to manage, rotate, or leak — Fabric delegates to the caller's Azure AD identity instead.
+2. This is Microsoft's recommended default pattern for OneLake shortcuts specifically.
+3. Key Vault-backed authentication for Fabric connections is still preview-stage with documented gaps (consistent with what was found when evaluating Fabric Data Factory earlier in this project).
+4. This project has a single developer running and validating each step — organizational account is the appropriate pattern here. A service principal (not account key) would be the right upgrade if this shortcut were consumed by an unattended production process instead.
+
+**Note:** consistency with the ADF pattern (Key Vault) wasn't the goal — using the right authentication pattern per technology and context is, even when that means two different patterns in the same project.
+
 ## Orchestration: Azure Data Factory (not Fabric Data Pipelines)
 
 **Considered:** mid-build, evaluated switching from standalone ADF to Fabric Data Factory (pipelines built inside the Fabric workspace), prompted by Microsoft's own migration messaging recommending Fabric-native pipelines going forward.
