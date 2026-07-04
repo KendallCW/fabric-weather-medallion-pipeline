@@ -48,15 +48,16 @@ HUMIDITY_PCT_RANGE = (0.0, 100.0)
 
 spark.sql("CREATE SCHEMA IF NOT EXISTS silver")
 
-spark.sql("""
+spark.sql(f"""
     CREATE TABLE IF NOT EXISTS watermark_location (
         location_id                    STRING NOT NULL,
         last_processed_ingestion_date  DATE
     )
     USING DELTA
+    LOCATION '{WAREHOUSE_DIR}/watermark_location'
 """)
 
-spark.sql("""
+spark.sql(f"""
     CREATE TABLE IF NOT EXISTS etl_run_log (
         pipeline_run_id    STRING,
         layer              STRING,
@@ -66,9 +67,10 @@ spark.sql("""
         run_timestamp      TIMESTAMP
     )
     USING DELTA
+    LOCATION '{WAREHOUSE_DIR}/etl_run_log'
 """)
 
-spark.sql("""
+spark.sql(f"""
     CREATE TABLE IF NOT EXISTS silver.weather_observations (
         location_id            STRING NOT NULL,
         observation_datetime   TIMESTAMP NOT NULL,
@@ -80,6 +82,7 @@ spark.sql("""
         _merged_at             TIMESTAMP
     )
     USING DELTA
+    LOCATION '{WAREHOUSE_DIR}/silver.db/weather_observations'
     PARTITIONED BY (location_id)
 """)
 
