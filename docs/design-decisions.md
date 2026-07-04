@@ -151,6 +151,21 @@ Three additional fixes from the same review pass:
 - `fact_weather_daily` had no per-row lineage (silver has `_merged_at`; gold had nothing). Added `pipeline_run_id` and `_computed_at`, matching the existing silver-layer pattern.
 - The gold MERGE only handled matched/insert cases, never deletes. If a silver row is later corrected from `is_valid=true` to `false`, the corresponding gold day would stay behind as an orphaned fact row with no valid backing observation. Added `whenNotMatchedBySourceDelete()` — safe here specifically because gold is a full recompute (the source dataframe always represents "everything currently valid," so anything in the target absent from source is genuinely stale).
 
+## Power BI: local .pbix built via MCP modeling tools, no Fabric workspace needed
+
+**Context:** with Fabric access blocked (see "Execution environment" above), the semantic model + report for this project was built entirely in **Power BI Desktop running locally**, using a Power BI modeling MCP server connected directly to the Desktop instance's local Analysis Services engine (`localhost:<port>`) — the same XMLA-based automation surface Tabular Editor and other external tools use.
+
+**Data load:** `local/export_gold_for_powerbi.py` exports `gold.fact_weather_daily`, `gold.dim_location`, and `gold.dim_date` from the local Delta warehouse to flat, single-file Parquet (no Delta transaction log, no partitioning) into `local/powerbi_export/` — these are regenerable derived artifacts, excluded from git via `.gitignore`. The three files were imported into Power BI Desktop via **Get Data → Parquet**, pointed at local file paths.
+
+**Model built via MCP, not manual clicking:**
+- Relationships (`fact_weather_daily.location_id` → `dim_location`, `fact_weather_daily.date_id` → `dim_date`) were auto-detected correctly by Power BI Desktop on import; verified via the MCP relationship listing rather than assumed.
+- 7 DAX measures (`Avg Temperature`, `Avg Humidity`, `Avg Wind Speed`, `Avg Comfort Index`, `Avg Anomaly`, `Max Streak`, `Days Tracked`) were created and organized into a dedicated `Measure` table (its placeholder `Column` from Power BI's "Enter Data" hidden) — separating measures from data tables is a standard Power BI modeling practice.
+- Measures were validated with a real DAX query (`SUMMARIZECOLUMNS` by city) before building any visuals, rather than trusting the DAX compiled without checking the actual numbers.
+
+**Validation results confirm end-to-end pipeline correctness:** average temperatures per city are climatically sensible (Dubai 28.1°C, Reykjavik 4.8°C, Chicago 10.5°C, Cincinnati 13.2°C, Singapore 26.7°C), every city shows exactly 4,018 days (matching the silver/gold row counts exactly — no data lost in the Parquet export or Power BI import), and streak lengths vary sensibly by climate volatility (Dubai's more variable climate produces a 59-day max streak vs. Singapore's stable tropical climate producing only 18).
+
+**Known cosmetic issue, not fixed:** Power BI's "Auto date/time" feature created 3 hidden calendar tables (`DateTableTemplate_...`, `LocalDateTable_...` ×2) before the setting was disabled. These don't appear in the Report view field list and aren't used by any relationship or measure in this model, so they were left in place rather than spending more time hunting for the exact deletion path in this Power BI Desktop version — purely cosmetic model clutter, not a functional issue.
+
 ## Open questions / things to revisit
 
 - [ ] Confirm final list of tracked locations
