@@ -128,8 +128,27 @@ Rationale: partition-by-date supports efficient incremental reads at silver (onl
 - **`etl_run_log` control table lives in the Fabric Lakehouse (Delta), not in ADF.** Considered adding a dedicated Azure SQL Database purely to host this table so ADF could write to it via Stored Procedure activity, but that adds a whole extra resource for a single logging table. Bronze-layer operational visibility is covered by ADF's native Monitor tab (run duration, rows copied, per-iteration success/failure, retries) instead. The actual `etl_run_log` Delta table gets populated starting at the silver-layer notebook, where writing to Delta is a native, one-line operation.
 - Silver-layer validation flags out-of-range values instead of silently dropping them
 
+## Gold layer: anomaly baseline restricted to prior years (fixing lookahead bias)
+
+**Problem found in review:** `anomaly_vs_historical_avg` originally averaged `avg_temperature_c` for the same `(location_id, month, day)` across *all other* years on record — including years after the row being evaluated. A 2016 reading was compared against a baseline that included 2020-2035 data, which hadn't happened yet from that reading's point of view. This is lookahead bias / data leakage: the "historical" baseline wasn't actually historical.
+
+**Fix:** the baseline now uses an expanding window ordered by year (`rowsBetween(Window.unboundedPreceding, -1)`), partitioned by `(location_id, month, day)`, so each row's baseline only includes strictly prior years. The earliest year on record for a given `(location, month, day)` has no prior years and correctly gets a `NULL` anomaly instead of a fabricated zero-history value.
+
+**Resolves** the open question below ("decide backfill window for historical anomaly baseline") — the answer is: prior years only, expanding, no fixed window length.
+
+## Gold layer: streak threshold recomputed over full history (documented, not changed)
+
+`streak_days_above_threshold`'s per-location threshold (mean + 1 stddev of `avg_temperature_c`) is intentionally computed over each location's **entire** history, not just prior years — unlike the anomaly baseline above. Because gold is a full recompute every run, this means the threshold can shift slightly as new days arrive, and **streak values for past dates can change between runs**. This is accepted as a consequence of the full-recompute design (see "Gold layer: full recompute" above), not a bug: the threshold represents "hot for this city given everything we know," which is expected to move as more data arrives. Left unchanged after the 2026-07-03 gold layer review; flagged here so it isn't mistaken for a defect later.
+
+## Gold layer: added humidity/wind columns, row-level lineage, and delete-on-stale (2026-07-03 review)
+
+Three additional fixes from the same review pass:
+- `avg_humidity_pct` and `avg_wind_speed_kmh` were already computed as inputs to `comfort_index` but discarded before the final `fact_weather_daily` write. Now persisted as columns so `comfort_index` can be audited and BI can show daily humidity/wind without a join back to silver.
+- `fact_weather_daily` had no per-row lineage (silver has `_merged_at`; gold had nothing). Added `pipeline_run_id` and `_computed_at`, matching the existing silver-layer pattern.
+- The gold MERGE only handled matched/insert cases, never deletes. If a silver row is later corrected from `is_valid=true` to `false`, the corresponding gold day would stay behind as an orphaned fact row with no valid backing observation. Added `whenNotMatchedBySourceDelete()` — safe here specifically because gold is a full recompute (the source dataframe always represents "everything currently valid," so anything in the target absent from source is genuinely stale).
+
 ## Open questions / things to revisit
 
 - [ ] Confirm final list of tracked locations
-- [ ] Decide backfill window for historical anomaly baseline (gold layer)
+- [x] Decide backfill window for historical anomaly baseline (gold layer) — resolved 2026-07-03: prior years only (expanding window), see above
 - [ ] Evaluate whether ADF triggers should be schedule-based or event-based

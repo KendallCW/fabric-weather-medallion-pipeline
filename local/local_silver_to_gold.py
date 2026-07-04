@@ -1,18 +1,40 @@
-# 02_silver_to_gold.py
-# Fabric PySpark notebook (exported as .py; convert to .ipynb in Fabric if preferred)
+# local_silver_to_gold.py
+# Local adaptation of fabric/notebooks/02_silver_to_gold.py for testing the
+# transformation logic on a Windows machine with PySpark + Delta Lake,
+# without a Fabric Lakehouse. Same logic, only the Spark session setup and
+# table registration change (see docs/design-decisions.md: "Execution
+# environment: local PySpark instead of Fabric Lakehouse").
 #
-# Responsibilities:
-#   1. Read silver.weather_observations (full history, not watermark-based —
-#      see docs/design-decisions.md: "Gold layer: full recompute")
-#   2. Aggregate to daily grain per location
-#   3. Compute comfort_index, anomaly_vs_historical_avg, streak_days_above_threshold
-#   4. Upsert into gold.fact_weather_daily, gold.dim_location, gold.dim_date
-#   5. Write run outcome to etl_run_log
+# All CREATE TABLE statements below (including the read-only reference to
+# silver.weather_observations) use explicit LOCATION. Local runs use Spark's
+# in-memory catalog, which doesn't persist across process runs, while the
+# Delta files on disk do — without LOCATION, every table's identity would
+# depend on catalog state that resets every run instead of the data that
+# doesn't (see docs/design-decisions.md: "Fix Delta tables to use explicit
+# LOCATION").
 
-from pyspark.sql import functions as F, Window
+from pyspark.sql import SparkSession, functions as F, Window
+from delta import configure_spark_with_delta_pip
 from delta.tables import DeltaTable
 import uuid
 from datetime import datetime, timezone
+from pathlib import Path
+
+# ---------------------------------------------------------------------------
+# Local Spark session setup (this block replaces Fabric's built-in `spark`)
+# ---------------------------------------------------------------------------
+
+PROJECT_ROOT = Path(__file__).resolve().parent.as_posix()
+WAREHOUSE_DIR = f"{PROJECT_ROOT}/warehouse"
+
+builder = (
+    SparkSession.builder.appName("silver_to_gold_local")
+    .config("spark.sql.extensions", "io.delta.sql.DeltaSparkSessionExtension")
+    .config("spark.sql.catalog.spark_catalog", "org.apache.spark.sql.delta.catalog.DeltaCatalog")
+    .config("spark.sql.warehouse.dir", WAREHOUSE_DIR)
+)
+spark = configure_spark_with_delta_pip(builder).getOrCreate()
+spark.sparkContext.setLogLevel("WARN")
 
 PIPELINE_RUN_ID = str(uuid.uuid4())
 RUN_TIMESTAMP = datetime.now(timezone.utc)
@@ -21,10 +43,42 @@ RUN_TIMESTAMP = datetime.now(timezone.utc)
 # 0. Ensure control + target tables exist
 # ---------------------------------------------------------------------------
 
+spark.sql("CREATE SCHEMA IF NOT EXISTS silver")
 spark.sql("CREATE SCHEMA IF NOT EXISTS gold")
 
-# Exact DDL per sql/ddl/gold_star_schema.sql.
-spark.sql("""
+# Read-only reference: registers the existing silver table (written by
+# local_bronze_to_silver.py) in this session's catalog so spark.table(...)
+# below resolves it.
+spark.sql(f"""
+    CREATE TABLE IF NOT EXISTS silver.weather_observations (
+        location_id            STRING NOT NULL,
+        observation_datetime   TIMESTAMP NOT NULL,
+        temperature_c          DOUBLE,
+        humidity_pct           DOUBLE,
+        wind_speed_kmh         DOUBLE,
+        precipitation_mm       DOUBLE,
+        is_valid               BOOLEAN,
+        _merged_at             TIMESTAMP
+    )
+    USING DELTA
+    LOCATION '{WAREHOUSE_DIR}/silver.db/weather_observations'
+    PARTITIONED BY (location_id)
+""")
+
+spark.sql(f"""
+    CREATE TABLE IF NOT EXISTS etl_run_log (
+        pipeline_run_id    STRING,
+        layer              STRING,
+        status             STRING,
+        error_message      STRING,
+        rows_affected      INT,
+        run_timestamp      TIMESTAMP
+    )
+    USING DELTA
+    LOCATION '{WAREHOUSE_DIR}/etl_run_log'
+""")
+
+spark.sql(f"""
     CREATE TABLE IF NOT EXISTS gold.dim_location (
         location_id    STRING NOT NULL,
         city_name      STRING,
@@ -33,9 +87,10 @@ spark.sql("""
         longitude      DOUBLE
     )
     USING DELTA
+    LOCATION '{WAREHOUSE_DIR}/gold.db/dim_location'
 """)
 
-spark.sql("""
+spark.sql(f"""
     CREATE TABLE IF NOT EXISTS gold.dim_date (
         date_id        INT NOT NULL,
         full_date      DATE,
@@ -46,9 +101,10 @@ spark.sql("""
         is_weekend     BOOLEAN
     )
     USING DELTA
+    LOCATION '{WAREHOUSE_DIR}/gold.db/dim_date'
 """)
 
-spark.sql("""
+spark.sql(f"""
     CREATE TABLE IF NOT EXISTS gold.fact_weather_daily (
         location_id                    STRING NOT NULL,
         date_id                        INT NOT NULL,
@@ -62,6 +118,7 @@ spark.sql("""
         _computed_at                   TIMESTAMP
     )
     USING DELTA
+    LOCATION '{WAREHOUSE_DIR}/gold.db/fact_weather_daily'
     PARTITIONED BY (location_id)
 """)
 
@@ -278,3 +335,34 @@ except Exception as e:
 
 finally:
     gold_updates_df.unpersist()
+
+# ---------------------------------------------------------------------------
+# Quick verification queries
+# ---------------------------------------------------------------------------
+print("\n--- gold.fact_weather_daily row count by location ---")
+spark.sql("SELECT location_id, COUNT(*) AS filas FROM gold.fact_weather_daily GROUP BY location_id").show()
+
+print("\n--- sample rows (Cincinnati, most recent 10 days) ---")
+spark.sql("""
+    SELECT f.location_id, d.full_date, f.avg_temperature_c, f.avg_humidity_pct,
+           f.avg_wind_speed_kmh, f.comfort_index, f.anomaly_vs_historical_avg,
+           f.streak_days_above_threshold, f.pipeline_run_id, f._computed_at
+    FROM gold.fact_weather_daily f
+    JOIN gold.dim_date d ON f.date_id = d.date_id
+    WHERE f.location_id = 'cincinnati'
+    ORDER BY d.full_date DESC
+    LIMIT 10
+""").show(truncate=False)
+
+print("\n--- sample rows (Cincinnati, earliest 3 days on record — anomaly should be NULL, no prior years) ---")
+spark.sql("""
+    SELECT f.location_id, d.full_date, f.avg_temperature_c, f.anomaly_vs_historical_avg
+    FROM gold.fact_weather_daily f
+    JOIN gold.dim_date d ON f.date_id = d.date_id
+    WHERE f.location_id = 'cincinnati'
+    ORDER BY d.full_date ASC
+    LIMIT 3
+""").show(truncate=False)
+
+print("\n--- etl_run_log (gold layer) ---")
+spark.sql("SELECT * FROM etl_run_log WHERE layer = 'gold' ORDER BY run_timestamp DESC").show(truncate=False)

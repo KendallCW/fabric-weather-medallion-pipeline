@@ -9,10 +9,15 @@
 # instead of being an obvious, scoped setting like this script.
 #
 # Usage: from this folder, run:  .\run_local_notebook.ps1
+#        or, for another local script:  .\run_local_notebook.ps1 -Script local_silver_to_gold.py
+
+param(
+    [string]$Script = "local_bronze_to_silver.py"
+)
 
 $env:PATH = "C:\hadoop\bin;" + $env:PATH
 $env:PYSPARK_PYTHON = "$PWD\.venv311\Scripts\python.exe"
 $env:PYSPARK_DRIVER_PYTHON = "$PWD\.venv311\Scripts\python.exe"
 
-Write-Host "Environment configured for this session. Running notebook..." -ForegroundColor Cyan
-& "$PWD\.venv311\Scripts\python.exe" local_bronze_to_silver.py
+Write-Host "Environment configured for this session. Running $Script..." -ForegroundColor Cyan
+& "$PWD\.venv311\Scripts\python.exe" $Script
