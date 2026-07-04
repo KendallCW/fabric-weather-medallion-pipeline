@@ -136,6 +136,10 @@ Rationale: partition-by-date supports efficient incremental reads at silver (onl
 
 **Resolves** the open question below ("decide backfill window for historical anomaly baseline") — the answer is: prior years only, expanding, no fixed window length.
 
+**Verified 2026-07-03** against the full local recompute (20,090 rows total — 4,018 days × 5 cities, matching the expected day count with no rows lost or duplicated by the fix):
+- Cincinnati's first three days on record (2015-01-01 to 2015-01-03) all have `anomaly_vs_historical_avg = NULL`, since no prior year exists yet.
+- Cincinnati 2016-01-01 (`avg_temperature_c = 0.496`) has `anomaly_vs_historical_avg = 2.896`, which is exactly `0.496 - (-2.4)` — a baseline of precisely the single prior year on record (2015-01-01's `-2.4`), not an average diluted by 2017-2025 data. Manually recomputing this one value by hand, rather than trusting that the window logic "looks right," is what actually confirms the fix — the code review alone only established that the *intent* was correct.
+
 ## Gold layer: streak threshold recomputed over full history (documented, not changed)
 
 `streak_days_above_threshold`'s per-location threshold (mean + 1 stddev of `avg_temperature_c`) is intentionally computed over each location's **entire** history, not just prior years — unlike the anomaly baseline above. Because gold is a full recompute every run, this means the threshold can shift slightly as new days arrive, and **streak values for past dates can change between runs**. This is accepted as a consequence of the full-recompute design (see "Gold layer: full recompute" above), not a bug: the threshold represents "hot for this city given everything we know," which is expected to move as more data arrives. Left unchanged after the 2026-07-03 gold layer review; flagged here so it isn't mistaken for a defect later.
