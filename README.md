@@ -13,6 +13,8 @@ Eleven years (2015–2025) of hourly weather data for 5 cities (Cincinnati, Chic
 - 20,090 daily aggregates in gold (4,018 days × 5 cities)
 - 7 DAX measures, 3 relationships, 1 semantic model built via MCP-driven modeling on Power BI Desktop
 
+![Dashboard preview](docs/dashboard-preview.png)
+
 ## Architecture
 
 ```
