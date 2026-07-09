@@ -31,6 +31,34 @@ Credentials for the ADF↔storage connection are managed via Azure Key Vault.
 
 See [`docs/design-decisions.md`](docs/design-decisions.md) for the full decision log — including things that didn't work on the first try — and [`docs/data-dictionary.md`](docs/data-dictionary.md) for the schema of every layer.
 
+### Silver transformation, step by step
+
+The bronze JSON arrives with weather values packed into parallel arrays (`hourly.time`, `hourly.temperature_2m`, ...). Turning that into one row per hour is the core of the silver-layer notebook — traced below by variable name, matching `local/local_bronze_to_silver.py` exactly. (Full writeup, plus a call-graph attempt that turned up empty for a good reason, in [`docs/code-diagrams/`](docs/code-diagrams/).)
+
+```mermaid
+flowchart TD
+    A["raw_df<br/>Read bronze JSON"]
+    B["zipped_df<br/>Zip hourly arrays together"]
+    C["exploded_df<br/>One row per hour now"]
+    D["typed_df<br/>Cast types, rename columns"]
+    E["validated_df<br/>Flag out-of-range values"]
+    F["deduped_df<br/>Drop duplicate hours"]
+    G["silver_updates_df<br/>Add merge timestamp"]
+    H["MERGE INTO<br/>Upsert into silver table"]
+
+    A --> B --> C --> D --> E --> F --> G --> H
+
+    classDef gray fill:#F1EFE8,stroke:#5F5E5A,color:#2C2C2A;
+    classDef teal fill:#E1F5EE,stroke:#0F6E56,color:#04342C;
+    classDef coral fill:#FAECE7,stroke:#993C1D,color:#4A1B0C;
+    classDef purple fill:#EEEDFE,stroke:#534AB7,color:#26215C;
+
+    class A gray
+    class B,C teal
+    class D,E,F,G coral
+    class H purple
+```
+
 ### 🧰 Stack
 
 Tools listed here were actually used and verified in this project — no badge without evidence in the repo.
