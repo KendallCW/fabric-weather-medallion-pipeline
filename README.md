@@ -25,39 +25,26 @@ Open-Meteo API → Azure Data Factory (HTTP + Binary connector)
               → Power BI (semantic model + dashboard)
 ```
 
-Credentials for the ADF↔storage connection are managed via Azure Key Vault.
+Credentials for the ADF↔storage connection are managed via Azure Key Vault. The silver/gold notebooks currently run against local PySpark + Delta Lake rather than Fabric Lakehouse — a licensing/access constraint, not a design choice; full story in [`docs/design-decisions.md`](docs/design-decisions.md).
 
-**Note on execution environment:** the silver/gold notebooks were designed for Microsoft Fabric Lakehouse but currently run against local PySpark + Delta Lake, due to a chain of Microsoft account/licensing blockers unrelated to the engineering itself (shared trial capacity contention, Developer Program rejections, tenant conflicts — see `docs/design-decisions.md` for the full account). The transformation logic is identical either way, since Fabric's Lakehouse is itself built on Delta Lake/Spark; moving back to Fabric requires no logic changes.
+## Repo structure
 
-See [`docs/design-decisions.md`](docs/design-decisions.md) for the full decision log — including things that didn't work on the first try — and [`docs/data-dictionary.md`](docs/data-dictionary.md) for the schema of every layer.
-
-### Silver transformation, step by step
-
-The bronze JSON arrives with weather values packed into parallel arrays (`hourly.time`, `hourly.temperature_2m`, ...). Turning that into one row per hour is the core of the silver-layer notebook — traced below by variable name, matching `local/local_bronze_to_silver.py` exactly. (Full writeup, plus a call-graph attempt that turned up empty for a good reason, in [`docs/code-diagrams/`](docs/code-diagrams/).)
-
-```mermaid
-flowchart TD
-    A["raw_df<br/>Read bronze JSON"]
-    B["zipped_df<br/>Zip hourly arrays together"]
-    C["exploded_df<br/>One row per hour now"]
-    D["typed_df<br/>Cast types, rename columns"]
-    E["validated_df<br/>Flag out-of-range values"]
-    F["deduped_df<br/>Drop duplicate hours"]
-    G["silver_updates_df<br/>Add merge timestamp"]
-    H["MERGE INTO<br/>Upsert into silver table"]
-
-    A --> B --> C --> D --> E --> F --> G --> H
-
-    classDef gray fill:#F1EFE8,stroke:#5F5E5A,color:#2C2C2A;
-    classDef teal fill:#E1F5EE,stroke:#0F6E56,color:#04342C;
-    classDef coral fill:#FAECE7,stroke:#993C1D,color:#4A1B0C;
-    classDef purple fill:#EEEDFE,stroke:#534AB7,color:#26215C;
-
-    class A gray
-    class B,C teal
-    class D,E,F,G coral
-    class H purple
 ```
+├── docs/                    # design decisions, data dictionary, retrospective, code diagrams
+├── adf/                     # exported ADF pipelines, datasets, linked services
+├── fabric/notebooks/        # PySpark notebooks (bronze→silver, silver→gold) — Fabric target
+├── local/                   # local PySpark execution path (README explains why + how)
+├── powerbi/                 # .pbix dashboard + DAX measure docs
+└── sql/ddl/                 # table definitions for silver/gold layers
+```
+
+## Key engineering decisions
+
+- **Incremental loading**, not full reload — watermark-based extraction with `MERGE INTO` upserts at the silver layer, verified with exact row counts across multiple runs
+- **Error handling & logging** — retry policies in ADF, centralized `etl_run_log` control table
+- **Data quality validation** — range checks and null flagging at silver, not silent drops
+- **Lookahead bias caught and fixed in gold** — the historical anomaly baseline originally leaked future years into "historical" averages; caught in a self-review pass, fixed with an expanding prior-years-only window, and verified by hand against a specific row
+- **Local execution over Fabric**, by necessity not preference — see [`docs/design-decisions.md`](docs/design-decisions.md) for the full account of the licensing obstacles that led here, and the path back to Fabric when access is available
 
 ### 🧰 Stack
 
@@ -105,28 +92,41 @@ Used for architecture/design discussion, debugging ADF and PySpark issues, and �
   <img alt="GitHub" src="https://img.shields.io/badge/GitHub-181717?style=flat-square&logo=github&logoColor=white" />
 </p>
 
-## Repo structure
-
-```
-├── docs/                    # design decisions, data dictionary, retrospective
-├── adf/                     # exported ADF pipelines, datasets, linked services
-├── fabric/notebooks/        # PySpark notebooks (bronze→silver, silver→gold) — Fabric target
-├── local/                   # local PySpark execution path (README explains why + how)
-├── powerbi/                 # .pbix dashboard + DAX measure docs
-└── sql/ddl/                 # table definitions for silver/gold layers
-```
-
-## Key engineering decisions
-
-- **Incremental loading**, not full reload — watermark-based extraction with `MERGE INTO` upserts at the silver layer, verified with exact row counts across multiple runs
-- **Error handling & logging** — retry policies in ADF, centralized `etl_run_log` control table
-- **Data quality validation** — range checks and null flagging at silver, not silent drops
-- **Lookahead bias caught and fixed in gold** — the historical anomaly baseline originally leaked future years into "historical" averages; caught in a self-review pass, fixed with an expanding prior-years-only window, and verified by hand against a specific row
-- **Local execution over Fabric**, by necessity not preference — documented as a licensing/access constraint, not a technical limitation, with a clear path back to Fabric when access is available
-
 ## What I would do differently
 
 See [`docs/what-i-would-do-differently.md`](docs/what-i-would-do-differently.md).
+
+---
+
+## Deep dive: silver transformation, step by step
+
+*(Optional detail below — the sections above are enough to understand the project. This is here for anyone who wants to see exactly how the bronze JSON becomes clean rows.)*
+
+The bronze JSON arrives with weather values packed into parallel arrays (`hourly.time`, `hourly.temperature_2m`, ...). Turning that into one row per hour is the core of the silver-layer notebook — traced below by variable name, matching `local/local_bronze_to_silver.py` exactly. (Full writeup, plus a call-graph attempt that turned up empty for a good reason, in [`docs/code-diagrams/`](docs/code-diagrams/).)
+
+```mermaid
+flowchart TD
+    A["raw_df<br/>Read bronze JSON"]
+    B["zipped_df<br/>Zip hourly arrays together"]
+    C["exploded_df<br/>One row per hour now"]
+    D["typed_df<br/>Cast types, rename columns"]
+    E["validated_df<br/>Flag out-of-range values"]
+    F["deduped_df<br/>Drop duplicate hours"]
+    G["silver_updates_df<br/>Add merge timestamp"]
+    H["MERGE INTO<br/>Upsert into silver table"]
+
+    A --> B --> C --> D --> E --> F --> G --> H
+
+    classDef gray fill:#F1EFE8,stroke:#5F5E5A,color:#2C2C2A;
+    classDef teal fill:#E1F5EE,stroke:#0F6E56,color:#04342C;
+    classDef coral fill:#FAECE7,stroke:#993C1D,color:#4A1B0C;
+    classDef purple fill:#EEEDFE,stroke:#534AB7,color:#26215C;
+
+    class A gray
+    class B,C teal
+    class D,E,F,G coral
+    class H purple
+```
 
 ## Author
 
