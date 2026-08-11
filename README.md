@@ -1,12 +1,27 @@
 # Fabric Weather Medallion Pipeline
 
-End-to-end data engineering pipeline: public weather API → Azure Data Factory → ADLS Gen2 (bronze) → medallion transformation (silver/gold) → Power BI semantic model.
+**A portfolio project built to prove I can design and ship a real data pipeline — not just describe one.**
 
 **Status:** ✅ Complete — bronze, silver, gold, and a Power BI dashboard are built, validated, and documented.
 
-## Overview
+## Why this project exists
 
-Eleven years (2015–2025) of hourly weather data for 5 cities (Cincinnati, Chicago, Dubai, Reykjavik, Singapore) flow through a medallion architecture: raw API ingestion, incremental cleaning/validation, and business-logic aggregation (comfort index, historical anomaly, heat streaks), landing in a Power BI dashboard.
+I'm a Business Analyst (Abbott, P&G) transitioning into Data/Cloud Engineering. Reading about Azure Data Factory or Power BI isn't the same as being the person who has to make a connector actually decode a real API response, or catch a subtle bug in your own analytics logic before it ships to a dashboard. This project is evidence of the second kind of experience.
+
+**The scenario:** compare climate patterns across five very different cities — Cincinnati and Chicago (where I've worked), plus Dubai, Reykjavik, and Singapore (chosen for maximum climate contrast) — over an 11-year window, and turn that into something a business user could actually explore: *is today unusual for this city, compared to its own history? How long do heat streaks typically run here vs. somewhere with a completely different climate?*
+
+Everything below — the architecture, the specific bugs I hit and fixed, the tools I chose and why — exists to answer that question end-to-end, the way a real data engineering task would require.
+
+**What this project demonstrates:**
+- Designing and running a real ingestion pipeline against a public API, including working around an actual connector bug I didn't expect
+- Incremental, idempotent pipeline design (watermark + `MERGE`) instead of re-processing everything on every run
+- Catching a real analytical bug (lookahead bias in a historical comparison) through deliberate self-review, not by luck
+- Working through a genuine platform obstacle (Microsoft Fabric licensing/access) and still shipping, instead of stopping there
+- Building a BI semantic model and dashboard that answers the actual question above, not just a table of raw numbers
+
+## What was built
+
+Eleven years (2015–2025) of hourly weather data for those 5 cities flow through a medallion architecture — raw ingestion, incremental cleaning, business-logic aggregation — landing in a Power BI dashboard.
 
 **Key numbers:**
 - 482,160 raw hourly observations in silver (96,432 per city — exact, verified, zero duplicates/gaps)
@@ -48,6 +63,13 @@ flowchart LR
 ```
 
 Bronze, silver, and gold are colored to literally match their names — not just a naming convention, an actual visual medallion.
+
+| Stage | What happens | Why |
+|---|---|---|
+| **Bronze** | Azure Data Factory pulls raw JSON from Open-Meteo, once per city, and lands it untouched in ADLS Gen2 | Keep an unmodified copy of exactly what the source sent — if anything downstream is ever wrong, this is the ground truth to check against |
+| **Silver** | PySpark parses, types, deduplicates, and validates the raw JSON into one row per hour | Turn "whatever the API happened to send" into something reliable enough to build analytics on |
+| **Gold** | PySpark aggregates silver to daily granularity and computes the actual business questions — comfort index, historical anomaly, heat streaks | This is where "raw weather data" becomes "an answer to the question this project set out to answer" |
+| **Power BI** | A semantic model + dashboard on top of gold | Where a business user actually interacts with the answer, not the pipeline |
 
 Credentials for the ADF↔storage connection are managed via Azure Key Vault. The silver/gold notebooks currently run against local PySpark + Delta Lake rather than Fabric Lakehouse — a licensing/access constraint, not a design choice; full story in [`docs/design-decisions.md`](docs/design-decisions.md).
 
