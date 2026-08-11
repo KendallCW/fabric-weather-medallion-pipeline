@@ -202,10 +202,6 @@ flowchart TD
 7. **`gold_updates_df`** — stamp every row with `pipeline_run_id` and `_computed_at`
 8. **`MERGE INTO`** — upsert matching rows, insert new ones, **and delete** any `(location_id, date_id)` no longer backed by a valid silver row — safe here specifically because gold is a full recompute, so anything missing from the source is genuinely stale
 
-## Want the real interactive version?
-
-The two diagrams above are static — GitHub renders Mermaid, but not JavaScript, so there's no hover or animation possible directly in this README. A true interactive version (hover tooltips, animated flow) would need to live as a real webpage — doable for free via **GitHub Pages**, linked from here, as a future addition rather than part of the README itself.
-
 ## Author
 
 Kendall Castro — [GitHub](https://github.com/KendallCW)
