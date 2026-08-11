@@ -1,0 +1,22 @@
+{
+    "name": "ls_adlsgen2_bronze",
+    "properties": {
+        "annotations": [],
+        "type": "AzureBlobFS",
+        "typeProperties": {
+            "url": "https://stweathermedallion.dfs.core.windows.net/",
+            "accountKey": {
+                "type": "AzureKeyVaultSecret",
+                "store": {
+                    "referenceName": "ls_akv_weathermedallion",
+                    "type": "LinkedServiceReference"
+                },
+                "secretName": "storage-account-key"
+            }
+        },
+        "connectVia": {
+            "referenceName": "AutoResolveIntegrationRuntime",
+            "type": "IntegrationRuntimeReference"
+        }
+    }
+}
