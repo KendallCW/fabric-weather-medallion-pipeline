@@ -17,13 +17,37 @@ Eleven years (2015–2025) of hourly weather data for 5 cities (Cincinnati, Chic
 
 ## Architecture
 
+```mermaid
+flowchart LR
+    A[Open-Meteo API]
+    B[Azure Data Factory]
+    KV[(Azure Key Vault)]
+    C[(ADLS Gen2<br/>BRONZE)]
+    D[(PySpark + Delta<br/>SILVER)]
+    E[(PySpark + Delta<br/>GOLD)]
+    F[Power BI Dashboard]
+
+    A --> B --> C --> D --> E --> F
+    KV -.credentials.-> B
+
+    classDef source fill:#F1EFE8,stroke:#5F5E5A,color:#2C2C2A;
+    classDef orchestrator fill:#E1F5EE,stroke:#0F6E56,color:#04342C;
+    classDef security fill:#FAECE7,stroke:#993C1D,color:#4A1B0C,stroke-dasharray: 4 2;
+    classDef bronze fill:#F1E0CE,stroke:#8B5A2B,color:#4A2E12;
+    classDef silver fill:#EAEAEA,stroke:#8C8C8C,color:#2C2C2C;
+    classDef gold fill:#FCE9B8,stroke:#B8860B,color:#4A3A05;
+    classDef bi fill:#EEEDFE,stroke:#534AB7,color:#26215C;
+
+    class A source
+    class B orchestrator
+    class KV security
+    class C bronze
+    class D silver
+    class E gold
+    class F bi
 ```
-Open-Meteo API → Azure Data Factory (HTTP + Binary connector)
-              → ADLS Gen2 (bronze, raw JSON)
-              → PySpark + Delta Lake (silver: parse/type/dedupe/validate, MERGE + watermark)
-              → PySpark + Delta Lake (gold: star schema, comfort index, historical anomaly, heat streaks)
-              → Power BI (semantic model + dashboard)
-```
+
+Bronze, silver, and gold are colored to literally match their names — not just a naming convention, an actual visual medallion.
 
 Credentials for the ADF↔storage connection are managed via Azure Key Vault. The silver/gold notebooks currently run against local PySpark + Delta Lake rather than Fabric Lakehouse — a licensing/access constraint, not a design choice; full story in [`docs/design-decisions.md`](docs/design-decisions.md).
 
@@ -127,6 +151,60 @@ flowchart TD
     class D,E,F,G coral
     class H purple
 ```
+
+**What's happening at each step:**
+1. **`raw_df`** — read the raw JSON files, one per city/date, straight off ADLS
+2. **`zipped_df`** — `hourly.time`, `hourly.temperature_2m`, etc. arrive as separate parallel arrays; `arrays_zip` pairs them up by position into one array of structs
+3. **`exploded_df`** — `explode` turns that one array (still a single row) into one row per hour — this is the actual "unpacking" step
+4. **`typed_df`** — cast raw strings/numbers to proper types, rename to the final column names
+5. **`validated_df`** — flag rows with out-of-range values (`is_valid`) instead of dropping them, so bad data stays visible for review
+6. **`deduped_df`** — drop exact duplicate `(location_id, observation_datetime)` rows, in case a file gets reprocessed
+7. **`silver_updates_df`** — stamp every row with `_merged_at` for this run
+8. **`MERGE INTO`** — upsert into `silver.weather_observations`: update rows that already exist, insert the ones that don't
+
+## Deep dive: gold transformation, step by step
+
+*(Also optional — matches `local/local_silver_to_gold.py` exactly.)*
+
+Gold reads all of silver and recomputes the daily fact table from scratch every run (not incrementally) — `anomaly_vs_historical_avg` and `streak_days_above_threshold` are both cross-row calculations over a location's full history, so there's no correct way to compute them one row at a time.
+
+```mermaid
+flowchart TD
+    A["daily_df<br/>Group silver rows by day"]
+    B["comfort_df<br/>Add comfort_index"]
+    C["anomaly_df<br/>Add anomaly vs prior years"]
+    D["with_threshold_df<br/>Add per-city heat threshold"]
+    E["grouped_df<br/>Tag consecutive-day groups"]
+    F["streaked_df<br/>Count streak length"]
+    G["gold_updates_df<br/>Add run lineage"]
+    H["MERGE INTO<br/>Upsert + delete stale rows"]
+
+    A --> B --> C --> D --> E --> F --> G --> H
+
+    classDef gray fill:#F1EFE8,stroke:#5F5E5A,color:#2C2C2A;
+    classDef teal fill:#E1F5EE,stroke:#0F6E56,color:#04342C;
+    classDef coral fill:#FAECE7,stroke:#993C1D,color:#4A1B0C;
+    classDef purple fill:#EEEDFE,stroke:#534AB7,color:#26215C;
+
+    class A gray
+    class B,C teal
+    class D,E,F coral
+    class G,H purple
+```
+
+**What's happening at each step:**
+1. **`daily_df`** — group silver's hourly rows by `(location_id, day)`, averaging temperature/humidity/wind down to one row per city per day
+2. **`comfort_df`** — apply the project's comfort-index heuristic (a documented approximation, not an official meteorological formula): adjusts for humidity above 20°C, for wind below 10°C, and passes through unchanged in between
+3. **`anomaly_df`** — the step that had the lookahead-bias bug: for each `(location, month, day)`, average `avg_temperature_c` across *years strictly before* the one being evaluated (an expanding window ordered by year), so a 2016 row is never compared against 2020-2035 data it couldn't have known about yet
+4. **`with_threshold_df`** — compute each city's own heat threshold (its mean temperature + 1 standard deviation), so "hot" means something different in Reykjavik than in Dubai
+5. **`grouped_df`** — a gaps-and-islands trick: subtract two row-number sequences to give every consecutive run of "above threshold" days a stable group id
+6. **`streaked_df`** — count each day's position within its own streak group, giving `streak_days_above_threshold`
+7. **`gold_updates_df`** — stamp every row with `pipeline_run_id` and `_computed_at`
+8. **`MERGE INTO`** — upsert matching rows, insert new ones, **and delete** any `(location_id, date_id)` no longer backed by a valid silver row — safe here specifically because gold is a full recompute, so anything missing from the source is genuinely stale
+
+## Want the real interactive version?
+
+The two diagrams above are static — GitHub renders Mermaid, but not JavaScript, so there's no hover or animation possible directly in this README. A true interactive version (hover tooltips, animated flow) would need to live as a real webpage — doable for free via **GitHub Pages**, linked from here, as a future addition rather than part of the README itself.
 
 ## Author
 
