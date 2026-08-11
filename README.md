@@ -146,6 +146,14 @@ Used for architecture/design discussion, debugging ADF and PySpark issues, and �
   <img alt="GitHub" src="https://img.shields.io/badge/GitHub-181717?style=flat-square&logo=github&logoColor=white" />
 </p>
 
+## What I gained
+
+- Real, hands-on Azure Data Factory experience — linked services, parameterized datasets, and debugging a connector that failed silently until I isolated it down to a response-decoding bug, not something a tutorial would have shown me
+- PySpark fundamentals through actual use: `arrays_zip`/`explode` for semi-structured JSON, window functions for the anomaly and streak calculations, Delta Lake `MERGE` for both incremental and full-recompute loading
+- Practice reviewing my own analytical logic critically — the lookahead-bias bug only surfaced because I went back and asked "does this actually make sense," not because anything threw an error
+- First hands-on use of MCP outside a coding editor — connecting a live tool directly to Power BI Desktop to build a semantic model programmatically instead of by hand
+- A clearer, evidence-based read on how much Azure/licensing friction has nothing to do with technical skill, and practice working around it instead of stalling on it
+
 ## What I would do differently
 
 See [`docs/what-i-would-do-differently.md`](docs/what-i-would-do-differently.md).
@@ -189,6 +197,25 @@ flowchart TD
 6. **`deduped_df`** — drop exact duplicate `(location_id, observation_datetime)` rows, in case a file gets reprocessed
 7. **`silver_updates_df`** — stamp every row with `_merged_at` for this run
 8. **`MERGE INTO`** — upsert into `silver.weather_observations`: update rows that already exist, insert the ones that don't
+
+**A concrete example of steps 2-3** (the part that's hardest to picture in the abstract): the raw JSON for one city/date looks like this —
+
+```json
+"hourly": {
+  "time":                 ["2024-01-01T00:00", "2024-01-01T01:00"],
+  "temperature_2m":       [0.9, -0.4],
+  "relative_humidity_2m": [62, 62]
+}
+```
+
+Three separate lists, matched up by position, become two separate rows:
+
+| observation_datetime | temperature_c | humidity_pct |
+|---|---|---|
+| 2024-01-01 00:00 | 0.9 | 62 |
+| 2024-01-01 01:00 | -0.4 | 62 |
+
+`zipped_df` pairs position 0 of each list together and position 1 together; `exploded_df` turns each pair into its own row. Everything from step 4 onward operates on ordinary rows like these.
 
 ## Deep dive: gold transformation, step by step
 
