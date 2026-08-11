@@ -30,6 +30,14 @@ Eleven years (2015–2025) of hourly weather data for those 5 cities flow throug
 
 ![Dashboard preview](docs/dashboard-preview.png)
 
+## Results
+
+Answering the questions posed above, using the dashboard's own numbers:
+
+- **Heat streaks track climate volatility, not just heat.** Dubai — hot but seasonally variable — produced the longest run above its own heat threshold (59 days). Singapore, just as hot but far more climatically stable, produced the shortest (18 days). Raw temperature alone doesn't predict streak length; how much a city's weather varies does.
+- **Every city runs slightly differently from its own history.** Chicago trends warmest relative to its own 11-year baseline (+0.55°C average anomaly); Dubai trends slightly cooler than its own history (-0.10°C). Small day-to-day, but real once backed by over a decade of comparison — which is exactly what the lookahead-bias fix in gold made trustworthy.
+- **Across all 5 cities:** 16.7°C average temperature, 15.8 average comfort index, 20,090 days tracked with zero gaps. Full measure definitions and per-city breakdown in [`powerbi/dax_measures.md`](powerbi/dax_measures.md).
+
 ## Architecture
 
 ```mermaid
@@ -77,7 +85,7 @@ Credentials for the ADF↔storage connection are managed via Azure Key Vault. Th
 
 ```
 ├── docs/                    # design decisions, data dictionary, retrospective, code diagrams
-├── adf/                     # exported ADF pipelines, datasets, linked services
+├── adf/                     # exported ADF pipelines and datasets
 ├── fabric/notebooks/        # PySpark notebooks (bronze→silver, silver→gold) — Fabric target
 ├── local/                   # local PySpark execution path (README explains why + how)
 ├── powerbi/                 # .pbix dashboard + DAX measure docs
@@ -146,9 +154,7 @@ See [`docs/what-i-would-do-differently.md`](docs/what-i-would-do-differently.md)
 
 ## Deep dive: silver transformation, step by step
 
-*(Optional detail below — the sections above are enough to understand the project. This is here for anyone who wants to see exactly how the bronze JSON becomes clean rows.)*
-
-The bronze JSON arrives with weather values packed into parallel arrays (`hourly.time`, `hourly.temperature_2m`, ...). Turning that into one row per hour is the core of the silver-layer notebook — traced below by variable name, matching `local/local_bronze_to_silver.py` exactly. (Full writeup, plus a call-graph attempt that turned up empty for a good reason, in [`docs/code-diagrams/`](docs/code-diagrams/).)
+The bronze JSON arrives with weather values packed into parallel arrays (`hourly.time`, `hourly.temperature_2m`, ...). Turning that into one row per hour is the core of the silver-layer notebook — traced below by variable name.
 
 ```mermaid
 flowchart TD
@@ -185,8 +191,6 @@ flowchart TD
 8. **`MERGE INTO`** — upsert into `silver.weather_observations`: update rows that already exist, insert the ones that don't
 
 ## Deep dive: gold transformation, step by step
-
-*(Also optional — matches `local/local_silver_to_gold.py` exactly.)*
 
 Gold reads all of silver and recomputes the daily fact table from scratch every run (not incrementally) — `anomaly_vs_historical_avg` and `streak_days_above_threshold` are both cross-row calculations over a location's full history, so there's no correct way to compute them one row at a time.
 
