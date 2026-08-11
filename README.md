@@ -6,9 +6,9 @@
 
 ## Why this project exists
 
-I'm a Business Analyst (Abbott, P&G) transitioning into Data/Cloud Engineering. Reading about Azure Data Factory or Power BI isn't the same as being the person who has to make a connector actually decode a real API response, or catch a subtle bug in your own analytics logic before it ships to a dashboard. This project is evidence of the second kind of experience.
+I'm a Business Analyst transitioning into Data/Cloud Engineering. Reading about Azure Data Factory or Power BI isn't the same as being the person who has to make a connector actually decode a real API response, or catch a subtle bug in your own analytics logic before it ships to a dashboard. This project is evidence of the second kind of experience.
 
-**The scenario:** compare climate patterns across five very different cities — Cincinnati and Chicago (where I've worked), plus Dubai, Reykjavik, and Singapore (chosen for maximum climate contrast) — over an 11-year window, and turn that into something a business user could actually explore: *is today unusual for this city, compared to its own history? How long do heat streaks typically run here vs. somewhere with a completely different climate?*
+**The scenario:** compare climate patterns across five very different cities — Cincinnati and Chicago, plus Dubai, Reykjavik, and Singapore (chosen for maximum climate contrast) — over an 11-year window, and turn that into something a business user could actually explore: *is today unusual for this city, compared to its own history? How long do heat streaks typically run here vs. somewhere with a completely different climate?*
 
 Everything below — the architecture, the specific bugs I hit and fixed, the tools I chose and why — exists to answer that question end-to-end, the way a real data engineering task would require.
 
