@@ -1,7 +1,10 @@
 from pyspark.sql import SparkSession
 from delta import configure_spark_with_delta_pip
+from pathlib import Path
 
-WH = "C:/Users/kcast/Projects/fabric-weather-medallion-pipeline/local/warehouse"
+PROJECT_ROOT = Path(__file__).resolve().parent.as_posix()
+WH = f"{PROJECT_ROOT}/warehouse"
+
 b = (
     SparkSession.builder.appName("check")
     .config("spark.sql.extensions", "io.delta.sql.DeltaSparkSessionExtension")
